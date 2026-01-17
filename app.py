@@ -12,21 +12,22 @@ API_ID = int(os.getenv("API_ID", "37578821"))
 API_HASH = os.getenv("API_HASH", "0afc13452cd98aaf062b15fe07851ef0")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 
-# Lista de membros disponíveis da equipe
-EQUIPE_DISPONIVEL = [
+# Lista de referência da equipe fixa (só pra consulta)
+EQUIPE_FIXA = [
     "peteruso",
     "marianaricarte", 
     "bruno_souusa",
     "alyssin1",
     "annymendess",
-    "allanbrandao7"
+    "allanbrandao7",
+    "gusthavo_x_x"
 ]
 
 class CriarGrupoRequest(BaseModel):
     nome_afiliado: str
     username_afiliado: str
-    equipe: Optional[List[str]] = None  # Lista de usernames da equipe pra adicionar
-    membro_extra: Optional[str] = None
+    membros: Optional[List[str]] = None  # Qualquer pessoa que quiser adicionar
+    adicionar_equipe_fixa: Optional[bool] = False  # Se True, adiciona toda equipe fixa
 
 class CriarGrupoResponse(BaseModel):
     success: bool
@@ -47,14 +48,9 @@ async def get_client():
 async def root():
     return {"status": "online", "message": "API Telegram Group Creator"}
 
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
-
-@app.get("/equipe")
+@app.get("/equipe-fixa")
 async def listar_equipe():
-    """Retorna a lista de membros disponíveis da equipe"""
-    return {"equipe_disponivel": EQUIPE_DISPONIVEL}
+    return {"equipe_fixa": EQUIPE_FIXA}
 
 @app.post("/criar-grupo", response_model=CriarGrupoResponse)
 async def criar_grupo(request: CriarGrupoRequest):
@@ -64,24 +60,23 @@ async def criar_grupo(request: CriarGrupoRequest):
         
         nome_grupo = f"{request.nome_afiliado} - Suporte Afiliado"
         
-        # Começa com lista vazia
         membros = []
         
-        # Adiciona membros da equipe selecionados (se houver)
-        if request.equipe:
-            for membro in request.equipe:
+        # Se quiser adicionar equipe fixa toda
+        if request.adicionar_equipe_fixa:
+            membros.extend(EQUIPE_FIXA)
+        
+        # Adiciona membros específicos passados (qualquer username)
+        if request.membros:
+            for membro in request.membros:
                 username = membro.replace("@", "")
-                if username in EQUIPE_DISPONIVEL:
+                if username and username not in membros:
                     membros.append(username)
         
         # Adiciona o afiliado
         username_afiliado = request.username_afiliado.replace("@", "")
-        membros.append(username_afiliado)
-        
-        # Adiciona membro extra se informado
-        if request.membro_extra and request.membro_extra.lower() not in ["não", "nao", "n", "-", ""]:
-            membro_extra = request.membro_extra.replace("@", "")
-            membros.append(membro_extra)
+        if username_afiliado and username_afiliado not in membros:
+            membros.append(username_afiliado)
         
         usuarios = []
         membros_com_erro = []
@@ -104,13 +99,20 @@ async def criar_grupo(request: CriarGrupoRequest):
             title=nome_grupo
         ))
         
-        chat_id = result.updates[1].participants.chat_id
+        # Pega o chat criado
+        chat = None
+        for c in result.chats:
+            chat = c
+            break
         
-        try:
-            invite = await client(ExportChatInviteRequest(peer=chat_id))
-            link_convite = invite.link
-        except:
-            link_convite = "Não foi possível gerar link"
+        # Gera link de convite
+        link_convite = "Grupo criado com sucesso"
+        if chat:
+            try:
+                invite = await client(ExportChatInviteRequest(peer=chat.id))
+                link_convite = invite.link
+            except Exception as e:
+                link_convite = f"Grupo criado (link indisponível)"
         
         membros_adicionados = [u.username or u.first_name for u in usuarios]
         
