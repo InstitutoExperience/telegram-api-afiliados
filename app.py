@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from telethon import TelegramClient
 from telethon.tl.functions.messages import CreateChatRequest, ExportChatInviteRequest
 from telethon.sessions import StringSession
+from typing import List, Optional
 import os
 
 app = FastAPI(title="Telegram Group Creator API")
@@ -11,7 +12,8 @@ API_ID = int(os.getenv("API_ID", "37578821"))
 API_HASH = os.getenv("API_HASH", "0afc13452cd98aaf062b15fe07851ef0")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 
-EQUIPE_FIXA = [
+# Lista de membros disponíveis da equipe
+EQUIPE_DISPONIVEL = [
     "peteruso",
     "marianaricarte", 
     "bruno_souusa",
@@ -23,7 +25,8 @@ EQUIPE_FIXA = [
 class CriarGrupoRequest(BaseModel):
     nome_afiliado: str
     username_afiliado: str
-    membro_extra: str = None
+    equipe: Optional[List[str]] = None  # Lista de usernames da equipe pra adicionar
+    membro_extra: Optional[str] = None
 
 class CriarGrupoResponse(BaseModel):
     success: bool
@@ -48,6 +51,11 @@ async def root():
 async def health():
     return {"status": "healthy"}
 
+@app.get("/equipe")
+async def listar_equipe():
+    """Retorna a lista de membros disponíveis da equipe"""
+    return {"equipe_disponivel": EQUIPE_DISPONIVEL}
+
 @app.post("/criar-grupo", response_model=CriarGrupoResponse)
 async def criar_grupo(request: CriarGrupoRequest):
     client = None
@@ -56,10 +64,21 @@ async def criar_grupo(request: CriarGrupoRequest):
         
         nome_grupo = f"{request.nome_afiliado} - Suporte Afiliado"
         
-        membros = EQUIPE_FIXA.copy()
+        # Começa com lista vazia
+        membros = []
+        
+        # Adiciona membros da equipe selecionados (se houver)
+        if request.equipe:
+            for membro in request.equipe:
+                username = membro.replace("@", "")
+                if username in EQUIPE_DISPONIVEL:
+                    membros.append(username)
+        
+        # Adiciona o afiliado
         username_afiliado = request.username_afiliado.replace("@", "")
         membros.append(username_afiliado)
         
+        # Adiciona membro extra se informado
         if request.membro_extra and request.membro_extra.lower() not in ["não", "nao", "n", "-", ""]:
             membro_extra = request.membro_extra.replace("@", "")
             membros.append(membro_extra)
@@ -85,7 +104,6 @@ async def criar_grupo(request: CriarGrupoRequest):
             title=nome_grupo
         ))
         
-        # Pega o chat_id do resultado
         chat_id = result.updates[1].participants.chat_id
         
         try:
