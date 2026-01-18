@@ -106,14 +106,12 @@ async def criar_grupo(request: CriarGrupoRequest):
         link_convite = "Não foi possível gerar link"
         if chat_id:
             try:
-                invite = await client(ExportChatInviteRequest(peer=PeerChat(chat_id)))
+                # Pega o chat diretamente
+                chat = result.chats[0]
+                invite = await client(ExportChatInviteRequest(peer=chat))
                 link_convite = invite.link
-            except Exception as e1:
-                try:
-                    invite = await client(ExportChatInviteRequest(peer=chat_id))
-                    link_convite = invite.link
-                except Exception as e2:
-                    link_convite = f"Grupo criado, link indisponível"
+            except Exception as e:
+                link_convite = f"t.me - Grupo criado (busque por: {nome_grupo})"
         
         membros_adicionados = [u.username or u.first_name for u in usuarios]
         
