@@ -12,7 +12,6 @@ API_ID = int(os.getenv("API_ID", "37578821"))
 API_HASH = os.getenv("API_HASH", "0afc13452cd98aaf062b15fe07851ef0")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 
-# Lista de referência da equipe fixa (só pra consulta)
 EQUIPE_FIXA = [
     "peteruso",
     "marianaricarte", 
@@ -26,8 +25,8 @@ EQUIPE_FIXA = [
 class CriarGrupoRequest(BaseModel):
     nome_afiliado: str
     username_afiliado: str
-    membros: Optional[List[str]] = None  # Qualquer pessoa que quiser adicionar
-    adicionar_equipe_fixa: Optional[bool] = False  # Se True, adiciona toda equipe fixa
+    membros: Optional[List[str]] = None
+    adicionar_equipe_fixa: Optional[bool] = False
 
 class CriarGrupoResponse(BaseModel):
     success: bool
@@ -62,18 +61,15 @@ async def criar_grupo(request: CriarGrupoRequest):
         
         membros = []
         
-        # Se quiser adicionar equipe fixa toda
         if request.adicionar_equipe_fixa:
             membros.extend(EQUIPE_FIXA)
         
-        # Adiciona membros específicos passados (qualquer username)
         if request.membros:
             for membro in request.membros:
                 username = membro.replace("@", "")
                 if username and username not in membros:
                     membros.append(username)
         
-        # Adiciona o afiliado
         username_afiliado = request.username_afiliado.replace("@", "")
         if username_afiliado and username_afiliado not in membros:
             membros.append(username_afiliado)
@@ -99,17 +95,28 @@ async def criar_grupo(request: CriarGrupoRequest):
             title=nome_grupo
         ))
         
-        # Pega o chat criado
-        chat = None
-        for c in result.chats:
-            chat = c
-            break
+        # Pega o chat_id corretamente
+        chat_id = None
+        
+        # Tenta pegar dos updates
+        if hasattr(result, 'updates'):
+            for update in result.updates:
+                if hasattr(update, 'participants') and hasattr(update.participants, 'chat_id'):
+                    chat_id = update.participants.chat_id
+                    break
+                if hasattr(update, 'message') and hasattr(update.message, 'peer_id'):
+                    chat_id = update.message.peer_id.chat_id
+                    break
+        
+        # Se não encontrou, tenta dos chats
+        if not chat_id and hasattr(result, 'chats') and result.chats:
+            chat_id = result.chats[0].id
         
         # Gera link de convite
         link_convite = "Grupo criado com sucesso"
-        if chat:
+        if chat_id:
             try:
-                invite = await client(ExportChatInviteRequest(peer=chat.id))
+                invite = await client(ExportChatInviteRequest(peer=chat_id))
                 link_convite = invite.link
             except Exception as e:
                 link_convite = f"Grupo criado (link indisponível)"
@@ -136,3 +143,4 @@ async def criar_grupo(request: CriarGrupoRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+```
