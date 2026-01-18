@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from telethon import TelegramClient
-from telethon.tl.functions.messages import CreateChatRequest, ExportChatInviteRequest
+from telethon.tl.functions.messages import CreateChatRequest, ExportChatInviteRequest, GetFullChatRequest
+from telethon.tl.types import InputPeerChat
 from telethon.sessions import StringSession
 from typing import List, Optional
 import os
@@ -95,26 +96,32 @@ async def criar_grupo(request: CriarGrupoRequest):
             title=nome_grupo
         ))
         
-        # Pega o chat_id corretamente
+        # Pega o chat_id
         chat_id = None
-        
         if hasattr(result, 'chats') and result.chats:
             chat_id = result.chats[0].id
         
         # Gera link de convite
-        link_convite = "Não foi possível gerar link"
+        link_convite = "Link não disponível"
+        
         if chat_id:
+            # Método 1: Usando InputPeerChat
             try:
-                from telethon.tl.functions.messages import GetFullChatRequest
-                full_chat = await client(GetFullChatRequest(chat_id=chat_id))
-                if full_chat.full_chat.exported_invite:
-                    link_convite = full_chat.full_chat.exported_invite.link
-                else:
-                    # Tenta criar um novo link
-                    invite = await client(ExportChatInviteRequest(peer=chat_id))
-                    link_convite = invite.link
-            except Exception as e:
-                link_convite = f"Erro: {str(e)[:50]}"
+                peer = InputPeerChat(chat_id=chat_id)
+                invite = await client(ExportChatInviteRequest(peer=peer))
+                link_convite = invite.link
+            except Exception as e1:
+                # Método 2: Pegando do full_chat
+                try:
+                    full_chat = await client(GetFullChatRequest(chat_id=chat_id))
+                    if full_chat.full_chat.exported_invite:
+                        link_convite = full_chat.full_chat.exported_invite.link
+                    else:
+                        link_convite = f"Erro M1: {str(e1)[:30]}"
+                except Exception as e2:
+                    link_convite = f"Erro: {str(e1)[:25]} | {str(e2)[:25]}"
+        
+        membros_adicionados = [u.username or u.first_name for u in usuarios]
         
         return CriarGrupoResponse(
             success=True,
