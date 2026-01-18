@@ -57,7 +57,7 @@ async def criar_grupo(request: CriarGrupoRequest):
     try:
         client = await get_client()
         
-        nome_grupo = f"{request.nome_afiliado} - Suporte Afiliado"
+        nome_grupo = f"{request.nome_afiliado} <> Experience Group"
         
         membros = []
         
