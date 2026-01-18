@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from telethon import TelegramClient
 from telethon.tl.functions.messages import CreateChatRequest, ExportChatInviteRequest
-from telethon.tl.types import PeerChat
 from telethon.sessions import StringSession
 from typing import List, Optional
 import os
@@ -58,7 +57,7 @@ async def criar_grupo(request: CriarGrupoRequest):
     try:
         client = await get_client()
         
-        nome_grupo = f"{request.nome_afiliado} <> Experience Group"
+        nome_grupo = f"{request.nome_afiliado} • Experience Group"
         
         membros = []
         
@@ -106,12 +105,11 @@ async def criar_grupo(request: CriarGrupoRequest):
         link_convite = "Não foi possível gerar link"
         if chat_id:
             try:
-                # Pega o chat diretamente
                 chat = result.chats[0]
                 invite = await client(ExportChatInviteRequest(peer=chat))
                 link_convite = invite.link
             except Exception as e:
-                link_convite = f"t.me - Grupo criado (busque por: {nome_grupo})"
+                link_convite = f"Grupo criado (busque por: {nome_grupo})"
         
         membros_adicionados = [u.username or u.first_name for u in usuarios]
         
