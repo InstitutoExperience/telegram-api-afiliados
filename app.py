@@ -30,11 +30,11 @@ class CriarGrupoRequest(BaseModel):
 
 class CriarGrupoResponse(BaseModel):
     success: bool
-    grupo_nome: str = None
-    link_convite: str = None
-    membros_adicionados: list = None
-    membros_com_erro: list = None
-    erro: str = None
+    grupo_nome: Optional[str] = None
+    link_convite: Optional[str] = None
+    membros_adicionados: Optional[List[str]] = None
+    membros_com_erro: Optional[list] = None
+    erro: Optional[str] = None
 
 async def get_client():
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
@@ -102,26 +102,14 @@ async def criar_grupo(request: CriarGrupoRequest):
         if hasattr(result, 'chats') and result.chats:
             chat_id = result.chats[0].id
         
-        # Se não, tenta pegar dos updates de forma segura
-        if not chat_id and hasattr(result, 'updates'):
-            updates_list = result.updates if isinstance(result.updates, list) else [result.updates]
-            for update in updates_list:
-                if hasattr(update, 'participants') and hasattr(update.participants, 'chat_id'):
-                    chat_id = update.participants.chat_id
-                    break
-                if hasattr(update, 'message') and hasattr(update.message, 'peer_id'):
-                    if hasattr(update.message.peer_id, 'chat_id'):
-                        chat_id = update.message.peer_id.chat_id
-                        break
-        
         # Gera link de convite
-        link_convite = None
+        link_convite = "Não foi possível gerar link"
         if chat_id:
             try:
                 invite = await client(ExportChatInviteRequest(peer=chat_id))
                 link_convite = invite.link
             except Exception as e:
-                link_convite = None
+                link_convite = f"Erro ao gerar link: {str(e)[:30]}"
         
         membros_adicionados = [u.username or u.first_name for u in usuarios]
         
