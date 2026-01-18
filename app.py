@@ -105,13 +105,16 @@ async def criar_grupo(request: CriarGrupoRequest):
         link_convite = "Não foi possível gerar link"
         if chat_id:
             try:
-                chat = result.chats[0]
-                invite = await client(ExportChatInviteRequest(peer=chat))
-                link_convite = invite.link
+                from telethon.tl.functions.messages import GetFullChatRequest
+                full_chat = await client(GetFullChatRequest(chat_id=chat_id))
+                if full_chat.full_chat.exported_invite:
+                    link_convite = full_chat.full_chat.exported_invite.link
+                else:
+                    # Tenta criar um novo link
+                    invite = await client(ExportChatInviteRequest(peer=chat_id))
+                    link_convite = invite.link
             except Exception as e:
-                link_convite = f"Grupo criado (busque por: {nome_grupo})"
-        
-        membros_adicionados = [u.username or u.first_name for u in usuarios]
+                link_convite = f"Erro: {str(e)[:50]}"
         
         return CriarGrupoResponse(
             success=True,
