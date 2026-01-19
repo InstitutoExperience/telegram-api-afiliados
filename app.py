@@ -37,7 +37,7 @@ class CriarGrupoResponse(BaseModel):
     membros_adicionados: Optional[List[str]] = None
     membros_com_erro: Optional[list] = None
     erro: Optional[str] = None
-    debug_info: Optional[str] = None  # Adicionado para debug
+    debug_info: Optional[str] = None
 
 async def get_client():
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
@@ -98,65 +98,71 @@ async def criar_grupo(request: CriarGrupoRequest):
             title=nome_grupo
         ))
         
-        # Pega o chat_id - CORRIGIDO
+        # Pega o chat_id - CORRIGIDO PARA OBJETO UPDATES
         chat_id = None
         debug_info = f"Result type: {type(result).__name__}"
 
-        # Tenta pegar de diferentes formas
+        # Método 1: Direto de result.chats (mais comum)
         if hasattr(result, 'chats') and result.chats:
-            chat = result.chats[0]
-            chat_id = chat.id
-            debug_info += f" | Encontrado via chats[0].id"
-        elif hasattr(result, 'updates'):
+            chat_id = result.chats[0].id
+            debug_info += " | via chats[0]"
+        
+        # Método 2: Se result.updates existe como LISTA
+        elif hasattr(result, 'updates') and isinstance(result.updates, list):
             for update in result.updates:
                 if hasattr(update, 'message') and hasattr(update.message, 'peer_id'):
                     if hasattr(update.message.peer_id, 'chat_id'):
                         chat_id = update.message.peer_id.chat_id
-                        debug_info += f" | Encontrado via updates"
+                        debug_info += " | via updates list"
                         break
         
-        # Se ainda não encontrou, tenta via result.updates diretamente
-        if not chat_id and hasattr(result, 'updates'):
-            for update in result.updates:
-                if hasattr(update, 'peer_id') and hasattr(update.peer_id, 'chat_id'):
-                    chat_id = update.peer_id.chat_id
-                    debug_info += f" | Encontrado via update.peer_id"
-                    break
+        # Método 3: Se updates é objeto único
+        elif hasattr(result, 'updates') and hasattr(result.updates, 'chats'):
+            if result.updates.chats:
+                chat_id = result.updates.chats[0].id
+                debug_info += " | via updates.chats"
         
-        # Última tentativa: procurar em result.__dict__
+        # Método 4: Buscar em qualquer atributo que tenha 'chat'
         if not chat_id:
-            debug_info += f" | Attrs: {dir(result)}"
+            for attr_name in dir(result):
+                if 'chat' in attr_name.lower():
+                    attr = getattr(result, attr_name, None)
+                    if attr and hasattr(attr, '__iter__') and not isinstance(attr, str):
+                        try:
+                            for item in attr:
+                                if hasattr(item, 'id'):
+                                    chat_id = item.id
+                                    debug_info += f" | via {attr_name}"
+                                    break
+                        except:
+                            pass
+                    if chat_id:
+                        break
+        
+        # Debug: mostrar atributos disponíveis se ainda não encontrou
+        if not chat_id:
+            attrs = [a for a in dir(result) if not a.startswith('_')]
+            debug_info += f" | attrs: {attrs[:10]}"
 
         # Gera link de convite
         link_convite = "Link não disponível"
 
         if chat_id:
             try:
-                # Método 1: Usar ExportChatInviteRequest com chat_id direto
                 invite = await client(ExportChatInviteRequest(peer=chat_id))
                 link_convite = invite.link
             except Exception as e1:
                 try:
-                    # Método 2: Pegar entity e exportar
-                    chat_entity = await client.get_entity(chat_id)
-                    invite = await client(ExportChatInviteRequest(peer=chat_entity))
+                    peer = InputPeerChat(chat_id=chat_id)
+                    invite = await client(ExportChatInviteRequest(peer=peer))
                     link_convite = invite.link
                 except Exception as e2:
                     try:
-                        # Método 3: Usando InputPeerChat
-                        peer = InputPeerChat(chat_id=chat_id)
-                        invite = await client(ExportChatInviteRequest(peer=peer))
-                        link_convite = invite.link
+                        full_chat = await client(GetFullChatRequest(chat_id=chat_id))
+                        if full_chat.full_chat.exported_invite:
+                            link_convite = full_chat.full_chat.exported_invite.link
                     except Exception as e3:
-                        try:
-                            # Método 4: Pegando do full_chat
-                            full_chat = await client(GetFullChatRequest(chat_id=chat_id))
-                            if full_chat.full_chat.exported_invite:
-                                link_convite = full_chat.full_chat.exported_invite.link
-                            else:
-                                link_convite = f"Sem link exportado"
-                        except Exception as e4:
-                            link_convite = f"Erro ao gerar link: {str(e1)[:30]}"
+                        link_convite = f"Erro: {str(e1)[:40]}"
         
         membros_adicionados = [u.username or u.first_name for u in usuarios]
         
@@ -167,13 +173,15 @@ async def criar_grupo(request: CriarGrupoRequest):
             link_convite=link_convite,
             membros_adicionados=membros_adicionados,
             membros_com_erro=membros_com_erro if membros_com_erro else None,
-            debug_info=debug_info  # Remova depois de resolver o problema
+            debug_info=debug_info
         )
         
     except Exception as e:
+        import traceback
         return CriarGrupoResponse(
             success=False,
-            erro=str(e)
+            erro=str(e),
+            debug_info=traceback.format_exc()[:500]
         )
     finally:
         if client:
