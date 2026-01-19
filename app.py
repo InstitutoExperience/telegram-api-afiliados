@@ -32,6 +32,7 @@ class CriarGrupoRequest(BaseModel):
 class CriarGrupoResponse(BaseModel):
     success: bool
     grupo_nome: Optional[str] = None
+    chat_id: Optional[int] = None
     link_convite: Optional[str] = None
     membros_adicionados: Optional[List[str]] = None
     membros_com_erro: Optional[list] = None
@@ -126,6 +127,7 @@ async def criar_grupo(request: CriarGrupoRequest):
         return CriarGrupoResponse(
             success=True,
             grupo_nome=nome_grupo,
+            chat_id=chat_id,
             link_convite=link_convite,
             membros_adicionados=membros_adicionados,
             membros_com_erro=membros_com_erro if membros_com_erro else None
