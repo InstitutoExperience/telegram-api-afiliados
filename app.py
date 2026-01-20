@@ -2,10 +2,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from telethon import TelegramClient
 from telethon.tl.functions.messages import CreateChatRequest, ExportChatInviteRequest, GetFullChatRequest
-from telethon.tl.types import InputPeerChat
+from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
+from telethon.tl.types import InputPeerChat, User, InputPhoneContact
 from telethon.sessions import StringSession
 from typing import List, Optional
 import os
+import random
 
 app = FastAPI(title="Telegram Group Creator API")
 
@@ -46,6 +48,58 @@ async def get_client():
         raise HTTPException(status_code=500, detail="Cliente não autorizado")
     return client
 
+async def get_user_by_phone(client, phone_number):
+    """Busca usuário pelo número de telefone"""
+    try:
+        # Adiciona o contato temporariamente
+        contact = InputPhoneContact(
+            client_id=random.randint(0, 9999999),
+            phone=phone_number,
+            first_name="Temp",
+            last_name="User"
+        )
+        result = await client(ImportContactsRequest([contact]))
+        
+        if result.users:
+            user = result.users[0]
+            # Remove o contato após obter o usuário
+            await client(DeleteContactsRequest(id=[user.id]))
+            return user
+        return None
+    except Exception as e:
+        print(f"Erro ao buscar por telefone {phone_number}: {e}")
+        return None
+
+async def get_user_by_identifier(client, identifier):
+    """Busca usuário por username ou número de telefone"""
+    identifier = identifier.strip()
+    
+    # Remove @ se tiver
+    if identifier.startswith("@"):
+        identifier = identifier[1:]
+    
+    # Verifica se é número de telefone (só dígitos, possivelmente com +)
+    clean_number = identifier.replace("+", "").replace(" ", "").replace("-", "")
+    
+    if clean_number.isdigit() and len(clean_number) >= 10:
+        # É um número de telefone
+        phone = identifier if identifier.startswith("+") else f"+{clean_number}"
+        user = await get_user_by_phone(client, phone)
+        if user:
+            return user, "phone"
+        else:
+            return None, f"Número {phone} não encontrado no Telegram"
+    else:
+        # É um username
+        try:
+            user = await client.get_entity(identifier)
+            if isinstance(user, User):
+                return user, "username"
+            else:
+                return None, f"@{identifier} não é um usuário"
+        except Exception as e:
+            return None, str(e)
+
 @app.get("/")
 async def root():
     return {"status": "online", "message": "API Telegram Group Creator"}
@@ -69,28 +123,29 @@ async def criar_grupo(request: CriarGrupoRequest):
         
         if request.membros:
             for membro in request.membros:
-                username = membro.replace("@", "")
-                if username and username not in membros:
-                    membros.append(username)
+                membro_limpo = membro.replace("@", "").strip()
+                if membro_limpo and membro_limpo not in membros:
+                    membros.append(membro_limpo)
         
-        username_afiliado = request.username_afiliado.replace("@", "")
+        username_afiliado = request.username_afiliado.replace("@", "").strip()
         if username_afiliado and username_afiliado not in membros:
             membros.append(username_afiliado)
         
         usuarios = []
         membros_com_erro = []
         
-        for username in membros:
-            try:
-                user = await client.get_entity(username)
+        for membro in membros:
+            user, result = await get_user_by_identifier(client, membro)
+            if user:
                 usuarios.append(user)
-            except Exception as e:
-                membros_com_erro.append({"username": username, "erro": str(e)})
+            else:
+                membros_com_erro.append({"identificador": membro, "erro": result})
         
         if not usuarios:
             return CriarGrupoResponse(
                 success=False,
-                erro="Nenhum usuário encontrado"
+                erro="Nenhum usuário válido encontrado",
+                membros_com_erro=membros_com_erro
             )
         
         result = await client(CreateChatRequest(
@@ -98,16 +153,14 @@ async def criar_grupo(request: CriarGrupoRequest):
             title=nome_grupo
         ))
         
-        # Pega o chat_id - CORRIGIDO PARA OBJETO UPDATES
+        # Pega o chat_id
         chat_id = None
         debug_info = f"Result type: {type(result).__name__}"
 
-        # Método 1: Direto de result.chats (mais comum)
         if hasattr(result, 'chats') and result.chats:
             chat_id = result.chats[0].id
             debug_info += " | via chats[0]"
         
-        # Método 2: Se result.updates existe como LISTA
         elif hasattr(result, 'updates') and isinstance(result.updates, list):
             for update in result.updates:
                 if hasattr(update, 'message') and hasattr(update.message, 'peer_id'):
@@ -116,30 +169,6 @@ async def criar_grupo(request: CriarGrupoRequest):
                         debug_info += " | via updates list"
                         break
         
-        # Método 3: Se updates é objeto único
-        elif hasattr(result, 'updates') and hasattr(result.updates, 'chats'):
-            if result.updates.chats:
-                chat_id = result.updates.chats[0].id
-                debug_info += " | via updates.chats"
-        
-        # Método 4: Buscar em qualquer atributo que tenha 'chat'
-        if not chat_id:
-            for attr_name in dir(result):
-                if 'chat' in attr_name.lower():
-                    attr = getattr(result, attr_name, None)
-                    if attr and hasattr(attr, '__iter__') and not isinstance(attr, str):
-                        try:
-                            for item in attr:
-                                if hasattr(item, 'id'):
-                                    chat_id = item.id
-                                    debug_info += f" | via {attr_name}"
-                                    break
-                        except:
-                            pass
-                    if chat_id:
-                        break
-        
-        # Debug: mostrar atributos disponíveis se ainda não encontrou
         if not chat_id:
             attrs = [a for a in dir(result) if not a.startswith('_')]
             debug_info += f" | attrs: {attrs[:10]}"
@@ -149,22 +178,18 @@ async def criar_grupo(request: CriarGrupoRequest):
 
         if chat_id:
             try:
-                invite = await client(ExportChatInviteRequest(peer=chat_id))
+                peer = InputPeerChat(chat_id=chat_id)
+                invite = await client(ExportChatInviteRequest(peer=peer))
                 link_convite = invite.link
             except Exception as e1:
                 try:
-                    peer = InputPeerChat(chat_id=chat_id)
-                    invite = await client(ExportChatInviteRequest(peer=peer))
-                    link_convite = invite.link
+                    full_chat = await client(GetFullChatRequest(chat_id=chat_id))
+                    if full_chat.full_chat.exported_invite:
+                        link_convite = full_chat.full_chat.exported_invite.link
                 except Exception as e2:
-                    try:
-                        full_chat = await client(GetFullChatRequest(chat_id=chat_id))
-                        if full_chat.full_chat.exported_invite:
-                            link_convite = full_chat.full_chat.exported_invite.link
-                    except Exception as e3:
-                        link_convite = f"Erro: {str(e1)[:40]}"
+                    link_convite = f"Erro: {str(e1)[:40]}"
         
-        membros_adicionados = [u.username or u.first_name for u in usuarios]
+        membros_adicionados = [u.username or u.phone or u.first_name for u in usuarios]
         
         return CriarGrupoResponse(
             success=True,
