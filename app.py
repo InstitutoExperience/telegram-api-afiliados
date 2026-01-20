@@ -51,7 +51,6 @@ async def get_client():
 async def get_user_by_phone(client, phone_number):
     """Busca usuário pelo número de telefone"""
     try:
-        # Adiciona o contato temporariamente
         contact = InputPhoneContact(
             client_id=random.randint(0, 9999999),
             phone=phone_number,
@@ -62,7 +61,6 @@ async def get_user_by_phone(client, phone_number):
         
         if result.users:
             user = result.users[0]
-            # Remove o contato após obter o usuário
             await client(DeleteContactsRequest(id=[user.id]))
             return user
         return None
@@ -74,15 +72,12 @@ async def get_user_by_identifier(client, identifier):
     """Busca usuário por username ou número de telefone"""
     identifier = identifier.strip()
     
-    # Remove @ se tiver
     if identifier.startswith("@"):
         identifier = identifier[1:]
     
-    # Verifica se é número de telefone (só dígitos, possivelmente com +)
     clean_number = identifier.replace("+", "").replace(" ", "").replace("-", "")
     
     if clean_number.isdigit() and len(clean_number) >= 10:
-        # É um número de telefone
         phone = identifier if identifier.startswith("+") else f"+{clean_number}"
         user = await get_user_by_phone(client, phone)
         if user:
@@ -90,7 +85,6 @@ async def get_user_by_identifier(client, identifier):
         else:
             return None, f"Número {phone} não encontrado no Telegram"
     else:
-        # É um username
         try:
             user = await client.get_entity(identifier)
             if isinstance(user, User):
@@ -153,41 +147,69 @@ async def criar_grupo(request: CriarGrupoRequest):
             title=nome_grupo
         ))
         
-        # Pega o chat_id
+        # Pega o chat_id - MÚLTIPLAS FORMAS
         chat_id = None
         debug_info = f"Result type: {type(result).__name__}"
 
+        # Método 1: result.chats
         if hasattr(result, 'chats') and result.chats:
             chat_id = result.chats[0].id
             debug_info += " | via chats[0]"
         
-        elif hasattr(result, 'updates') and isinstance(result.updates, list):
-            for update in result.updates:
-                if hasattr(update, 'message') and hasattr(update.message, 'peer_id'):
-                    if hasattr(update.message.peer_id, 'chat_id'):
-                        chat_id = update.message.peer_id.chat_id
-                        debug_info += " | via updates list"
-                        break
+        # Método 2: result.updates.chats
+        elif hasattr(result, 'updates') and hasattr(result.updates, 'chats') and result.updates.chats:
+            chat_id = result.updates.chats[0].id
+            debug_info += " | via updates.chats"
         
+        # Método 3: Buscar nos dialogs recentes
         if not chat_id:
-            attrs = [a for a in dir(result) if not a.startswith('_')]
-            debug_info += f" | attrs: {attrs[:10]}"
+            debug_info += " | Buscando nos dialogs..."
+            async for dialog in client.iter_dialogs(limit=5):
+                if dialog.name == nome_grupo:
+                    chat_id = dialog.id
+                    debug_info += f" | Encontrado via dialogs: {chat_id}"
+                    break
+        
+        # Método 4: Se ainda não encontrou, buscar pela entidade do nome
+        if not chat_id:
+            try:
+                chat_entity = await client.get_entity(nome_grupo)
+                chat_id = chat_entity.id
+                debug_info += f" | via get_entity: {chat_id}"
+            except Exception as e:
+                debug_info += f" | get_entity falhou: {str(e)[:30]}"
 
         # Gera link de convite
         link_convite = "Link não disponível"
 
         if chat_id:
+            # Tenta diferentes métodos para gerar o link
             try:
+                # Método 1: Direto com chat_id
                 peer = InputPeerChat(chat_id=chat_id)
                 invite = await client(ExportChatInviteRequest(peer=peer))
                 link_convite = invite.link
             except Exception as e1:
+                debug_info += f" | ExportChat erro: {str(e1)[:30]}"
                 try:
+                    # Método 2: Via GetFullChat
                     full_chat = await client(GetFullChatRequest(chat_id=chat_id))
                     if full_chat.full_chat.exported_invite:
                         link_convite = full_chat.full_chat.exported_invite.link
+                    else:
+                        # Tenta exportar novamente
+                        invite = await client(ExportChatInviteRequest(peer=InputPeerChat(chat_id=chat_id)))
+                        link_convite = invite.link
                 except Exception as e2:
-                    link_convite = f"Erro: {str(e1)[:40]}"
+                    debug_info += f" | FullChat erro: {str(e2)[:30]}"
+                    try:
+                        # Método 3: Busca a entidade e exporta
+                        chat_entity = await client.get_input_entity(chat_id)
+                        invite = await client(ExportChatInviteRequest(peer=chat_entity))
+                        link_convite = invite.link
+                    except Exception as e3:
+                        link_convite = f"Erro ao gerar link"
+                        debug_info += f" | Todos métodos falharam"
         
         membros_adicionados = [u.username or u.phone or u.first_name for u in usuarios]
         
