@@ -22,7 +22,10 @@ EQUIPE_FIXA = [
     "alyssin1",
     "annymendess",
     "allanbrandao7",
-    "gusthavo_x_x"
+    "gusthavo_x_x",
+    "@gustavoczar",
+    "@magaffiliatesupport",
+    "@gabrielm_topg"
 ]
 
 class CriarGrupoRequest(BaseModel):
