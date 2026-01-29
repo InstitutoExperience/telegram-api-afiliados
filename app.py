@@ -28,8 +28,13 @@ EQUIPE_FIXA = [
     "gabrielm_topg"
 ]
 
-# Admin padrão do grupo
-ADMIN_PADRAO = "bruno_souusa"
+# Admins do grupo (serão promovidos automaticamente)
+ADMINS_GRUPO = [
+    "bruno_souusa",
+    "alyssin1",
+    "annymendess",
+    "marianaricarte"
+]
 
 class CriarGrupoRequest(BaseModel):
     nome_afiliado: str
@@ -44,7 +49,7 @@ class CriarGrupoResponse(BaseModel):
     link_convite: Optional[str] = None
     membros_adicionados: Optional[List[str]] = None
     membros_com_erro: Optional[list] = None
-    admin_promovido: Optional[str] = None
+    admins_promovidos: Optional[List[str]] = None
     erro: Optional[str] = None
     debug_info: Optional[str] = None
 
@@ -134,15 +139,15 @@ async def criar_grupo(request: CriarGrupoRequest):
         
         usuarios = []
         membros_com_erro = []
-        usuario_admin = None  # Para guardar o usuário que será admin
+        usuarios_admins = {}  # Dicionário para guardar os usuários que serão admins
         
         for membro in membros:
             user, result = await get_user_by_identifier(client, membro)
             if user:
                 usuarios.append(user)
-                # Guarda o usuário admin
-                if membro.lower() == ADMIN_PADRAO.lower():
-                    usuario_admin = user
+                # Verifica se é um dos admins
+                if membro.lower() in [admin.lower() for admin in ADMINS_GRUPO]:
+                    usuarios_admins[membro.lower()] = user
             else:
                 membros_com_erro.append({"identificador": membro, "erro": result})
         
@@ -191,20 +196,23 @@ async def criar_grupo(request: CriarGrupoRequest):
                 debug_info += f" | get_entity falhou: {str(e)[:30]}"
 
         # Gerenciar admins do grupo
-        admin_promovido = None
+        admins_promovidos = []
         if chat_id:
-            try:
-                # Promover bruno_souusa como admin
-                if usuario_admin:
+            # Promover todos os admins da lista
+            for admin_username, admin_user in usuarios_admins.items():
+                try:
                     await client(EditChatAdminRequest(
                         chat_id=chat_id,
-                        user_id=usuario_admin,
+                        user_id=admin_user,
                         is_admin=True
                     ))
-                    admin_promovido = ADMIN_PADRAO
-                    debug_info += f" | Admin promovido: {ADMIN_PADRAO}"
-                
-                # Remover você (o criador) como admin
+                    admins_promovidos.append(admin_username)
+                    debug_info += f" | Admin promovido: {admin_username}"
+                except Exception as e:
+                    debug_info += f" | Erro ao promover {admin_username}: {str(e)[:30]}"
+            
+            # Remover o criador como admin
+            try:
                 me = await client.get_me()
                 await client(EditChatAdminRequest(
                     chat_id=chat_id,
@@ -212,9 +220,8 @@ async def criar_grupo(request: CriarGrupoRequest):
                     is_admin=False
                 ))
                 debug_info += " | Criador removido como admin"
-                
             except Exception as e:
-                debug_info += f" | Erro ao gerenciar admins: {str(e)[:50]}"
+                debug_info += f" | Erro ao remover criador: {str(e)[:30]}"
 
         # Gera link de convite
         link_convite = "Link não disponível"
@@ -257,7 +264,7 @@ async def criar_grupo(request: CriarGrupoRequest):
             link_convite=link_convite,
             membros_adicionados=membros_adicionados,
             membros_com_erro=membros_com_erro if membros_com_erro else None,
-            admin_promovido=admin_promovido,
+            admins_promovidos=admins_promovidos if admins_promovidos else None,
             debug_info=debug_info
         )
         
